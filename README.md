@@ -10,7 +10,7 @@ Default is timer 3
 
 ##Usage
 
-**Start**: *echo "<GPIO> <freq>" > /sys/kernel/debug/sqwave*<br />
+**Start**: *echo "&lt;GPIO&gt; &lt;freq&gt;" > /sys/kernel/debug/sqwave*<br />
 "*GPIO*" is GPIO number, "*freq*" is square wave frequency in Hz. Maximum frequency with 200 MHz system bus (default clock) is 125 kHz; high settings may result in performance penalty or watchdog reset.
 
 **Example**: to blink Black Swift's system LED with 1 Hz frequency: *echo "27 1" > /sys/kernel/debug/sqwave*
