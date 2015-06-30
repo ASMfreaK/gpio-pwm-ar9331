@@ -29,8 +29,8 @@
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 
-#define DRV_NAME	"gpio-sqwave"
-#define FILE_NAME	"sqwave"
+#define DRV_NAME	"gpio-pwm-ar9331"
+#define FILE_NAME	"pwm-ar9331"
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -48,7 +48,7 @@ MODULE_PARM_DESC(timer, "system timer number (0-3)");
 #define debug(fmt,args...)
 #endif	/* DEBUG_OUT */
 
-static unsigned int _timer_frequency=100000000;
+static unsigned int _timer_frequency=200000000;
 static spinlock_t	_lock;
 static unsigned int	_gpio_prev=0;
 
@@ -84,6 +84,8 @@ struct _timer_desc_struct
 #define GPIO_OFFS_SET		0x0C
 #define GPIO_OFFS_CLEAR		0x10
 
+#define PWM_MAX			65536
+
 ////////////////////////////////////////////////////////////////////////////////////////////
 
 void __iomem *ath79_timer_base=NULL;
@@ -97,16 +99,56 @@ void __iomem *gpio_cleardataout_addr=NULL;
 
 typedef struct
 {
-	int					timer;
-	int					irq;
-	int					gpio;
+	int			timer;
+	int			irq;
+	int			gpio;
 	unsigned int		frequency;
-	int					value;
+	unsigned int		timeout_total;
+	unsigned int		timeout_front;
+	unsigned int		timeout_back;
+	unsigned int		new_pos;
+	int			update;
+	int			value;
 } _timer_handler;
 
 static _timer_handler	_handler;
 
 static struct dentry* in_file;
+
+////////////////////////////////////////////////////////////////////////////////////////////
+
+inline void set_timer_reload(int timer, unsigned int freq)
+{
+	__raw_writel(freq, ath79_timer_base+_timers[timer].reload_reg);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////
+
+inline void set_gpio_value(int gpio, int val)
+{
+	if(val)
+	{
+		__raw_writel(1 << gpio, gpio_setdataout_addr);
+	}
+	else
+	{
+		__raw_writel(1 << gpio, gpio_cleardataout_addr);
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////
+
+void recalculate_timeouts(_timer_handler* handler){
+	unsigned int flags = 0;
+	spin_lock_irqsave(&_lock,flags);
+	handler->timeout_total=_timer_frequency/handler->frequency;
+	debug("New timeout: %u\n",handler->timeout_total);
+	handler->timeout_front =(unsigned int)(((unsigned long long)handler->timeout_total * (unsigned long long)handler->new_pos) / PWM_MAX);
+	debug("New front timeout: %u\n",handler->timeout_front);
+	handler->timeout_back = handler->timeout_total - handler->timeout_front;
+	debug("New back timeout: %u\n",handler->timeout_back);
+	spin_unlock_irqrestore(&_lock,flags);
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -130,15 +172,21 @@ static irqreturn_t timer_interrupt(int irq, void* dev_id)
 
 	if(handler && (handler->irq == irq) && (handler->gpio >= 0))
 	{
+		if(handler->update == 1)
+		{
+			handler->update = 0;
+			recalculate_timeouts(handler);
+		}
 		if(handler->value)
 		{
 			__raw_writel(1 << handler->gpio, gpio_setdataout_addr);
+			set_timer_reload(handler->timer, handler->timeout_back);
 		}
 		else
 		{
 			__raw_writel(1 << handler->gpio, gpio_cleardataout_addr);
+			set_timer_reload(handler->timer, handler->timeout_front);
 		}
-
 		handler->value=!handler->value;
 	}
 
@@ -186,16 +234,7 @@ static void stop(void)
 
 		if(_handler.gpio >= 0)
 		{
-			//	restore previous GPIO state
-			if(_gpio_prev)
-			{
-				__raw_writel(1 << _handler.gpio,gpio_setdataout_addr);
-			}
-			else
-			{
-				__raw_writel(1 << _handler.gpio,gpio_cleardataout_addr);
-			}
-
+			set_gpio_value(_handler.gpio, _gpio_prev);
 			gpio_free(_handler.gpio);
 			_handler.gpio=-1;
 		}
@@ -211,9 +250,8 @@ static void stop(void)
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 
-static int start(int gpio,unsigned int frequency)
+static int start(int gpio,unsigned int frequency,unsigned int pos)
 {
-	unsigned int timeout=0;
 	int irq=-1;
 	unsigned long flags=0;
 
@@ -221,7 +259,7 @@ static int start(int gpio,unsigned int frequency)
 
 	spin_lock_irqsave(&_lock,flags);
 	// need some time (10 ms) before first IRQ - even after "lock"?!
-	__raw_writel(_timer_frequency/100, ath79_timer_base+_timers[timer].reload_reg);
+	set_timer_reload(timer, _timer_frequency/100);
 
 	irq=add_irq(&_handler);
 
@@ -238,10 +276,11 @@ static int start(int gpio,unsigned int frequency)
 			// save current GPIO state
 			_gpio_prev=__raw_readl(gpio_readdata_addr+GPIO_OFFS_READ) & (1 << gpio);
 
-			timeout=_timer_frequency/frequency/2;
-			__raw_writel(timeout, ath79_timer_base+_timers[timer].reload_reg);
 
-			_handler.frequency=frequency;
+			_handler.frequency = frequency;
+			_handler.new_pos = pos;
+			recalculate_timeouts(&_handler);
+			set_timer_reload(timer, _handler.timeout_front);
 
 			debug("New frequency: %u.\n", frequency);
 
@@ -270,6 +309,7 @@ static ssize_t run_command(struct file *file, const char __user *buf,
 	char* in_pos=NULL;
 	char* end=NULL;
 	char* out_pos=NULL;
+	unsigned int flags = 0;
 
 	if(count > 512)
 		return -EINVAL;	//	file is too big
@@ -286,6 +326,7 @@ static ssize_t run_command(struct file *file, const char __user *buf,
 	{
 		unsigned int gpio=-1;
 		unsigned int frequency=0;
+		unsigned int pos=0;
 
 		while((in_pos < end) && is_space(*in_pos)) ++in_pos;	//	skip whitespace
 		if(in_pos >= end) break;
@@ -295,7 +336,7 @@ static ssize_t run_command(struct file *file, const char __user *buf,
 			stop();
 			return count;
 		}
-		else if(*in_pos == '?')
+		if(*in_pos == '?')
 		{
 			if(_handler.frequency)
 			{
@@ -309,46 +350,66 @@ static ssize_t run_command(struct file *file, const char __user *buf,
 
 			break;
 		}
+		if(*in_pos == '+'){
+			++in_pos;
+			while((in_pos < end) && is_space(*in_pos)) ++in_pos;    //      skip whitespace
+			if(in_pos >= end) break;
 
-		out_pos=line;
-		while((in_pos < end) && is_digit(*in_pos)) *out_pos++=*in_pos++;
-		*out_pos=0;
+			out_pos=line;
+			while((in_pos < end) && is_digit(*in_pos)) *out_pos++=*in_pos++;
+			*out_pos=0;
 
-		if(is_digit(line[0]))
-		{
-			sscanf(line, "%d", &gpio);
-		}
-		else
-		{
-			printk(KERN_INFO DRV_NAME " can't read GPIO number.\n");
-			break;
-		}
-
-		while((in_pos < end) && is_space(*in_pos)) ++in_pos;	//	skip whitespace
-
-		out_pos=line;
-		while((in_pos < end) && is_digit(*in_pos)) *out_pos++=*in_pos++;
-		*out_pos=0;
-
-		if(is_digit(line[0]))
-		{
-			sscanf(line, "%u", &frequency);
-		}
-		else
-		{
-			printk(KERN_INFO DRV_NAME " can't read frequency.\n");
-			break;
-		}
-
-		if((gpio >= 0) && (frequency > 0))
-		{
-			if(start(gpio,frequency) >= 0)
+			if(is_digit(line[0]))
 			{
-				debug("Started!\n");
+				sscanf(line, "%d", &gpio);
+			}
+			else
+			{
+				printk(KERN_INFO DRV_NAME " can't read GPIO number.\n");
 				break;
 			}
-		}
+	
+			while((in_pos < end) && is_space(*in_pos)) ++in_pos;	//	skip whitespace
+	
+			out_pos=line;
+			while((in_pos < end) && is_digit(*in_pos)) *out_pos++=*in_pos++;
+			*out_pos=0;
+	
+			if(is_digit(line[0]))
+			{
+				sscanf(line, "%u", &frequency);
+			}
+			else
+			{
+				printk(KERN_INFO DRV_NAME " can't read frequency.\n");
+				break;
+			}
+			
+			while((in_pos < end) && is_space(*in_pos)) ++in_pos;	//	skip whitespace
 
+			out_pos=line;
+			while((in_pos < end) && is_digit(*in_pos)) *out_pos++=*in_pos++;
+			*out_pos=0;
+
+			if(is_digit(line[0]))
+			{
+				sscanf(line, "%u", &pos);
+			}
+			else
+			{
+				printk(KERN_INFO DRV_NAME " can't read pos.\n");
+				break;
+			}
+
+			if((gpio >= 0) && (frequency > 0))
+			{
+				if(start(gpio,frequency,pos) >= 0)
+				{
+					debug("Started!\n");
+					break;
+				}
+			}
+		}
 		printk(KERN_INFO DRV_NAME " can't start.\n");
 		return 0;
 	}
@@ -380,13 +441,13 @@ static int __init mymodule_init(void)
 		_timer_frequency=ahb_clk->rate;
 	}
 
- 	ath79_timer_base=ioremap_nocache(AR71XX_RESET_BASE, AR71XX_RESET_SIZE);
+	ath79_timer_base=ioremap_nocache(AR71XX_RESET_BASE, AR71XX_RESET_SIZE);
 
- 	gpio_addr=ioremap_nocache(AR71XX_GPIO_BASE, AR71XX_GPIO_SIZE);
+	gpio_addr=ioremap_nocache(AR71XX_GPIO_BASE, AR71XX_GPIO_SIZE);
 
-    gpio_readdata_addr     = gpio_addr + GPIO_OFFS_READ;
-    gpio_setdataout_addr   = gpio_addr + GPIO_OFFS_SET;
-    gpio_cleardataout_addr = gpio_addr + GPIO_OFFS_CLEAR;
+	gpio_readdata_addr     = gpio_addr + GPIO_OFFS_READ;
+	gpio_setdataout_addr   = gpio_addr + GPIO_OFFS_SET;
+	gpio_cleardataout_addr = gpio_addr + GPIO_OFFS_CLEAR;
 
 	_handler.timer=-1;
 	_handler.irq=-1;

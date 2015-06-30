@@ -8,22 +8,22 @@
 include $(TOPDIR)/rules.mk
 include $(INCLUDE_DIR)/kernel.mk
 
-PKG_NAME:=gpio-meander
+PKG_NAME:=gpio-pwm-ar9331
 PKG_RELEASE:=1
 
 include $(INCLUDE_DIR)/package.mk
 
-define KernelPackage/gpio-sqwave
+define KernelPackage/gpio-pwm-ar9331
   SUBMENU:=Other modules
   DEPENDS:=@!LINUX_3_3
-  TITLE:=Timer IRQ handler
-  FILES:=$(PKG_BUILD_DIR)/gpio-sqwave.ko
+  TITLE:=PWM on gpio for AR9331
+  FILES:=$(PKG_BUILD_DIR)/gpio-pwm-ar9331.ko
   AUTOLOAD:=$(call AutoLoad,30,gpio-sqwave,1)
   KCONFIG:=
 endef
 
 define KernelPackage/gpio-sqwave/description
- This is GPIO square wave generator for AR9331 devices.
+ This is GPIO PWM generator for AR9331 devices.
 endef
 
 MAKE_OPTS:= \
@@ -42,4 +42,4 @@ define Build/Compile
 		modules
 endef
 
-$(eval $(call KernelPackage,gpio-sqwave))
+$(eval $(call KernelPackage,gpio-pwm-ar9331))

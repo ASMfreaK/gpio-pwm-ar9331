@@ -1,1 +1,1 @@
-obj-m += gpio-sqwave.o
+obj-m += gpio-pwm-ar9331.o
