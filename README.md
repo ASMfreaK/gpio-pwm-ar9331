@@ -7,13 +7,14 @@ gpio-pwm-ar9331 is an OpenWRT kernel module which provides PWM output on any AR9
 ##Intallation
 1. Build it using OpenWRT Buildroot.
 2. Upload package to device using your favorite method. 
-3. Run `opkg install kmod-gpio-pwm-ar9331_<version>.ipk` where `<version>` is version of a package. If it fails, rerun command with `--force-depends` flag i.e. `opkg install --force-depends  kmod-gpio-pwm-ar9331_<version>.ipk`
+3. Run `opkg install kmod-gpio-pwm-ar9331_<version>.ipk` where `<version>` is version of a package.
 
 ##Building
 1. Clone this repository to buildrootdir/package (i.e. 
 `cd /path/to/buildroot/` then `cd package/` and `git clone https://github.com/ASMfreaK/gpio-pwm-ar9331.git`)
-2. Run `make menuconfig` and select `Kernel modules  --->` then `Other modules  --->` and finally `kmod-gpio-pwm-ar9331`
-
+2. Run `make menuconfig` and select `Kernel modules  --->` then `Other modules  --->` and finally `kmod-gpio-pwm-ar9331`. Select other packages if needed and exit the dialog.
+3. Run `make`
+4. Install the freshly built firmware to BlackSwift.
 
 ##Initialisation
 `insmod gpio-sqwave`<br />
