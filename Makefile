@@ -18,11 +18,11 @@ define KernelPackage/gpio-pwm-ar9331
   DEPENDS:=@!LINUX_3_3
   TITLE:=PWM on gpio for AR9331
   FILES:=$(PKG_BUILD_DIR)/gpio-pwm-ar9331.ko
-  AUTOLOAD:=$(call AutoLoad,30,gpio-sqwave,1)
+  AUTOLOAD:=$(call AutoLoad,30,gpio-pwm-ar9331,1)
   KCONFIG:=
 endef
 
-define KernelPackage/gpio-sqwave/description
+define KernelPackage/gpio-pwm-ar9331/description
  This is GPIO PWM generator for AR9331 devices.
 endef
 
