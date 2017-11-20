@@ -17,7 +17,7 @@ gpio-pwm-ar9331 is an OpenWRT kernel module which provides PWM output on any AR9
 4. Install the freshly built firmware to BlackSwift.
 
 ##Initialisation
-`insmod gpio-sqwave`<br />
+`insmod gpio-pwm-ar9331`<br />
 Default is timer 3
 
 ##Usage
